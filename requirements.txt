@@ -1,5 +1,8 @@
 streamlit
 yfinance
 pandas
-prophet
+numpy
+tensorflow
+scikit-learn
+joblib
 plotly

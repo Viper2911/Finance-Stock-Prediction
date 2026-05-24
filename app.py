@@ -1,110 +1,148 @@
 import streamlit as st
-from datetime import date
 import yfinance as yf
 import pandas as pd
-from prophet import Prophet
-from prophet.plot import plot_plotly
-from plotly import graph_objs as go
+import numpy as np
+from tensorflow.keras.models import load_model
+import joblib
+import plotly.graph_objs as go
 
-st.set_page_config(page_title="Market Forecast", layout="wide")
+st.set_page_config(page_title="Market Forecast AI", layout="wide", page_icon="📈")
 
-START = "2015-01-01"
-TODAY = date.today().strftime("%Y-%m-%d")
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    .block-container {padding-top: 2rem; padding-bottom: 2rem;}
+    </style>
+""", unsafe_allow_html=True)
 
-st.title('📈 Upgraded Market Forecast App')
-st.write("Powered by Prophet Machine Learning + Technical Indicators")
+st.markdown("<h1 style='text-align: center;'>📈 Deep Learning Market Forecast</h1>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: #888888; margin-bottom: 2rem;'>Powered by Custom LSTM Neural Network Architecture</h5>", unsafe_allow_html=True)
 
 stocks = (
-    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 
-    'JPM', 'V', 'JNJ', 'WMT', 
     'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 
-    'ICICIBANK.NS', 'SBIN.NS', 'BHARTIARTL.NS'
+    'ICICIBANK.NS', 'SBIN.NS', 'BHARTIARTL.NS', 'SUNPHARMA.NS', 
+    'LAURUSLABS.NS', 'DRREDDY.NS', 'NESTLEIND.NS', 'HINDUNILVR.NS', 
+    'BEL.NS', 'IOC.NS', 'BAJFINANCE.NS', 'JIOFIN.NS', 'CDSL.NS'
 )
-selected_stock = st.selectbox('Select dataset for prediction', stocks)
 
-n_days = st.slider('Days of prediction into the future:', 1, 30, 7)
-
-@st.cache_data
-def get_exchange_rate():
-    try:
-        return yf.Ticker("INR=X").history(period="1d")['Close'].iloc[0]
-    except:
-        return 83.50 
+@st.cache_resource
+def load_ml_assets():
+    model = load_model("quantile_market_model.h5", compile=False)
+    scaler = joblib.load("market_scaler.pkl")
+    return model, scaler
 
 @st.cache_data
-def load_data(ticker):
-    data = yf.download(ticker, START, TODAY)
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.droplevel(1)
-    data.reset_index(inplace=True)
+def load_and_engineer_data(ticker):
+    df = yf.download(ticker, period="10y", progress=False)
     
-    if not ticker.endswith('.NS') and not ticker.endswith('.BO'):
-        inr_rate = get_exchange_rate()
-        for col in ['Open', 'High', 'Low', 'Close', 'Adj Close']:
-            if col in data.columns:
-                data[col] = data[col] * inr_rate
-    
-    data['SMA_20'] = data['Close'].rolling(window=20).mean()
-    
-    change = data["Close"].diff()
+    if df.empty:
+        st.error("No data found.")
+        st.stop()
+
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.droplevel(1)
+
+    df.reset_index(inplace=True)
+
+    if "Date" not in df.columns:
+        df.rename(columns={df.columns[0]: "Date"}, inplace=True)
+
+    df["Historical_ATH"] = df["High"].cummax()
+    df["Historical_ATL"] = df["Low"].cummin()
+    df["ATH_Proximity"] = df["Close"] / df["Historical_ATH"]
+    df["ATL_Proximity"] = df["Close"] / df["Historical_ATL"]
+    df["Intraday_Trend"] = (df["Close"] - df["Open"]) / df["Open"]
+    df["SMA_20"] = df["Close"].rolling(window=20).mean()
+
+    change = df["Close"].diff()
     gain = change.mask(change < 0, 0.0)
     loss = -change.mask(change > 0, 0.0)
     rs = gain.rolling(window=14).mean() / (loss.rolling(window=14).mean() + 1e-10)
-    data['RSI_14'] = 100 - (100 / (1 + rs))
+    df["RSI_14"] = 100 - (100 / (1 + rs))
+
+    df.dropna(inplace=True)
+    return df
+
+with st.container(border=True):
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        selected_stock = st.selectbox("🔍 Search & Select Market Asset", stocks)
+
+try:
+    model, scaler = load_ml_assets()
+    st.toast("✅ Neural Network & Scaler Online", icon="🧠")
+except Exception as e:
+    st.error(f"⚠️ Failed to load model/scaler.\n\nError: {e}")
+    st.stop()
+
+with st.spinner("Fetching live market data and engineering features..."):
+    df = load_and_engineer_data(selected_stock)
+
+with st.container(border=True):
+    st.subheader(f"Historical Trend: {selected_stock.replace('.NS', '')}")
     
-    return data.dropna()
-
-data_load_state = st.text('Loading and engineering data...')
-data = load_data(selected_stock)
-data_load_state.text('Data loaded successfully! ✅')
-
-st.subheader('Recent Market Data (Converted to ₹ INR)')
-st.write(data.tail())
-
-def plot_raw_data():
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=data['Date'], y=data['Open'], name="Stock Open", line=dict(color='blue')))
-    fig.add_trace(go.Scatter(x=data['Date'], y=data['Close'], name="Stock Close", line=dict(color='red')))
-    fig.add_trace(go.Scatter(x=data['Date'], y=data['SMA_20'], name="20-Day SMA", line=dict(color='orange', dash='dot')))
-    fig.layout.update(title_text='Historical Time Series with Range Slider (Prices in ₹)', xaxis_rangeslider_visible=True)
+    fig.add_trace(go.Scatter(x=df["Date"], y=df["Close"], name="Close Price", line=dict(color="#00ffcc", width=2)))
+    fig.add_trace(go.Scatter(x=df["Date"], y=df["SMA_20"], name="20-Day SMA", line=dict(color="#ff9900", dash="dot", width=2)))
+    
+    fig.update_layout(
+        xaxis_title="Date",
+        yaxis_title="Price (₹)",
+        xaxis_rangeslider_visible=True,
+        height=600,
+        template="plotly_dark",
+        margin=dict(l=0, r=0, t=50, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+    )
     st.plotly_chart(fig, use_container_width=True)
 
-plot_raw_data()
+with st.container(border=True):
+    st.subheader("🤖 AI Market Forecast for Tomorrow")
 
-df_train = data[['Date', 'Close', 'SMA_20', 'RSI_14']].copy()
-df_train = df_train.rename(columns={"Date": "ds", "Close": "y"})
+    with st.spinner("Running neural network sequence..."):
+        features = ["ATH_Proximity", "ATL_Proximity", "Intraday_Trend", "RSI_14", "SMA_20"]
+        latest_features = df[features].tail(1).values
+        scaled_features = scaler.transform(latest_features)
+        predictions = model.predict(scaled_features)
 
-with st.spinner('Training Prophet Model on Live Data...'):
-    m = Prophet(daily_seasonality=True)
+        dir_prob = float(predictions[0][0][0])
+        ret_low = float(predictions[1][0][0])
+        ret_expected = float(predictions[2][0][0])
+        ret_high = float(predictions[3][0][0])
+
+        last_close = float(df["Close"].iloc[-1])
+
+        price_expected = last_close * (1 + ret_expected)
+        price_low = last_close * (1 + ret_low)
+        price_high = last_close * (1 + ret_high)
+
+    trend = "UP 📈" if dir_prob > 0.5 else "DOWN 📉"
+    confidence = dir_prob if dir_prob > 0.5 else (1 - dir_prob)
+    confidence_color = "normal" if confidence > 0.6 else "off"
+
+    st.markdown("#### Network Directional Bias")
+    col_cur, col_dir, col_conf = st.columns(3)
+    col_cur.metric("Current Price", f"₹{last_close:.2f}")
+    col_dir.metric("Predicted Direction", trend)
+    col_conf.metric("AI Confidence", f"{confidence * 100:.2f}%", delta_color=confidence_color)
+
+    st.markdown("<hr style='margin-top: 1rem; margin-bottom: 2rem;'>", unsafe_allow_html=True)
+    st.markdown("#### Target Volatility Range")
     
-    m.add_regressor('SMA_20')
-    m.add_regressor('RSI_14')
-    
-    m.fit(df_train)
-    
-    future = m.make_future_dataframe(periods=n_days)
-    
-    last_sma = df_train['SMA_20'].iloc[-1]
-    last_rsi = df_train['RSI_14'].iloc[-1]
-    
-    future['SMA_20'] = last_sma
-    future['RSI_14'] = last_rsi
-    
-    forecast = m.predict(future)
+    col_floor, col_target, col_ceiling = st.columns(3)
 
-st.subheader('🤖 AI Forecast Data & Predicted Ranges')
+    with col_floor:
+        st.error(f"**Worst Case (Floor)**\n\n## ₹{price_low:.2f}")
 
-future_forecast = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(n_days)
-st.write(future_forecast)
+    with col_target:
+        st.info(f"**Expected Price**\n\n## ₹{price_expected:.2f}")
 
-st.info(f"**Target Range for Tomorrow:** The model expects the price to be roughly **₹{future_forecast['yhat'].iloc[0]:.2f}**, "
-        f"but it could fluctuate anywhere between **₹{future_forecast['yhat_lower'].iloc[0]:.2f}** (Worst Case) "
-        f"and **₹{future_forecast['yhat_upper'].iloc[0]:.2f}** (Best Case).")
+    with col_ceiling:
+        st.success(f"**Best Case (Ceiling)**\n\n## ₹{price_high:.2f}")
 
-st.write(f'Interactive Forecast plot for next {n_days} days')
-fig1 = plot_plotly(m, forecast)
-st.plotly_chart(fig1, use_container_width=True)
-
-st.write("Forecast Components (Trends & Seasonality)")
-fig2 = m.plot_components(forecast)
-st.write(fig2)
+with st.expander("🛠️ View Raw Data & Developer Debug Info"):
+    st.dataframe(df.tail(5), use_container_width=True)
+    st.write("**Model Input Shape:**", model.input_shape)
+    st.write("**Raw Input Array:**", latest_features)
+    st.write("**Scaled Input Array:**", scaled_features)
