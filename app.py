@@ -26,6 +26,11 @@ stocks = (
     'BEL.NS', 'IOC.NS', 'BAJFINANCE.NS', 'JIOFIN.NS', 'CDSL.NS'
 )
 
+with st.container(border=True):
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        selected_stock = st.selectbox("🔍 Search & Select Market Asset", stocks)
+
 @st.cache_resource
 def load_ml_assets():
     model = load_model("quantile_market_model.h5", compile=False)
@@ -64,11 +69,6 @@ def load_and_engineer_data(ticker):
     df.dropna(inplace=True)
     return df
 
-with st.container(border=True):
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        selected_stock = st.selectbox("🔍 Search & Select Market Asset", stocks)
-
 try:
     model, scaler = load_ml_assets()
     st.toast("✅ Neural Network & Scaler Online", icon="🧠")
@@ -102,9 +102,9 @@ with st.container(border=True):
 
     with st.spinner("Running neural network sequence..."):
         features = ["ATH_Proximity", "ATL_Proximity", "Intraday_Trend", "RSI_14", "SMA_20"]
-        latest_features = df[features].tail(1).values
+        latest_features = df[features].tail(10).values
         scaled_features = scaler.transform(latest_features)
-        predictions = model.predict(scaled_features)
+        predictions = model.predict(scaled_features.reshape(1, 10, len(features)))
 
         dir_prob = float(predictions[0][0][0])
         ret_low = float(predictions[1][0][0])
@@ -117,32 +117,27 @@ with st.container(border=True):
         price_low = last_close * (1 + ret_low)
         price_high = last_close * (1 + ret_high)
 
-    trend = "UP 📈" if dir_prob > 0.5 else "DOWN 📉"
-    confidence = dir_prob if dir_prob > 0.5 else (1 - dir_prob)
+    THRESHOLD = 0.50
+    trend = "UP 📈" if dir_prob > THRESHOLD else "DOWN 📉"
+    confidence = dir_prob if dir_prob > THRESHOLD else (1.0 - dir_prob)
     confidence_color = "normal" if confidence > 0.6 else "off"
 
-    st.markdown("#### Network Directional Bias")
     col_cur, col_dir, col_conf = st.columns(3)
     col_cur.metric("Current Price", f"₹{last_close:.2f}")
     col_dir.metric("Predicted Direction", trend)
     col_conf.metric("AI Confidence", f"{confidence * 100:.2f}%", delta_color=confidence_color)
 
     st.markdown("<hr style='margin-top: 1rem; margin-bottom: 2rem;'>", unsafe_allow_html=True)
-    st.markdown("#### Target Volatility Range")
     
     col_floor, col_target, col_ceiling = st.columns(3)
+    col_floor.error(f"**Worst Case (Floor)**\n\n## ₹{price_low:.2f}")
+    col_target.info(f"**Expected Price**\n\n## ₹{price_expected:.2f}")
+    col_ceiling.success(f"**Best Case (Ceiling)**\n\n## ₹{price_high:.2f}")
 
-    with col_floor:
-        st.error(f"**Worst Case (Floor)**\n\n## ₹{price_low:.2f}")
+with st.expander("📊 View Raw Data", expanded=False):
+    st.dataframe(df.tail(10), use_container_width=True)
 
-    with col_target:
-        st.info(f"**Expected Price**\n\n## ₹{price_expected:.2f}")
-
-    with col_ceiling:
-        st.success(f"**Best Case (Ceiling)**\n\n## ₹{price_high:.2f}")
-
-with st.expander("🛠️ View Raw Data & Developer Debug Info"):
-    st.dataframe(df.tail(5), use_container_width=True)
+with st.expander("🛠️ Developer Debug Info", expanded=False):
     st.write("**Model Input Shape:**", model.input_shape)
     st.write("**Raw Input Array:**", latest_features)
     st.write("**Scaled Input Array:**", scaled_features)
