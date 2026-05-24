@@ -39,6 +39,29 @@ def load_ml_assets():
 
 @st.cache_data
 def load_and_engineer_data(ticker):
+    macro_tickers = {
+        "NIFTY50": "^NSEI",
+        "USD_INR": "INR=X",
+        "SP500": "^GSPC",
+        "CRUDE_OIL": "CL=F",
+        "VIX": "^VIX"
+    }
+    
+    macro_dfs = []
+    for name, m_ticker in macro_tickers.items():
+        try:
+            m_df = yf.download(m_ticker, period="10y", progress=False)
+            if not m_df.empty:
+                if isinstance(m_df.columns, pd.MultiIndex):
+                    m_df.columns = m_df.columns.droplevel(1)
+                m_df[f"Macro_{name}_Return"] = m_df["Close"].pct_change()
+                macro_dfs.append(m_df[[f"Macro_{name}_Return"]])
+        except:
+            pass
+
+    macro_master = pd.concat(macro_dfs, axis=1)
+    macro_master = macro_master.ffill().bfill()
+
     df = yf.download(ticker, period="10y", progress=False)
     
     if df.empty:
@@ -47,11 +70,6 @@ def load_and_engineer_data(ticker):
 
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.droplevel(1)
-
-    df.reset_index(inplace=True)
-
-    if "Date" not in df.columns:
-        df.rename(columns={df.columns[0]: "Date"}, inplace=True)
 
     df["Historical_ATH"] = df["High"].cummax()
     df["Historical_ATL"] = df["Low"].cummin()
@@ -68,7 +86,13 @@ def load_and_engineer_data(ticker):
     rs = avg_gain / (avg_loss + 1e-10) 
     df["RSI_14"] = 100 - (100 / (1 + rs))
 
+    df = df.join(macro_master, how="left")
     df.dropna(inplace=True)
+
+    df.reset_index(inplace=True)
+    if "Date" not in df.columns:
+        df.rename(columns={df.columns[0]: "Date"}, inplace=True)
+
     return df
 
 try:
@@ -78,7 +102,7 @@ except Exception as e:
     st.error(f"⚠️ Failed to load model/scaler.\n\nError: {e}")
     st.stop()
 
-with st.spinner("Fetching live market data and engineering features..."):
+with st.spinner("Fetching macro indicators and engineering features..."):
     df = load_and_engineer_data(selected_stock)
 
 with st.container(border=True):
@@ -103,7 +127,12 @@ with st.container(border=True):
     st.subheader("🤖 AI Market Forecast for Tomorrow")
 
     with st.spinner("Running neural network sequence..."):
-        features = ["ATH_Proximity", "ATL_Proximity", "Intraday_Trend", "RSI_14", "SMA_20"]
+        features = [
+            "ATH_Proximity", "ATL_Proximity", "Intraday_Trend", "RSI_14", "SMA_20",
+            "Macro_NIFTY50_Return", "Macro_USD_INR_Return", "Macro_SP500_Return", 
+            "Macro_CRUDE_OIL_Return", "Macro_VIX_Return"
+        ]
+        
         latest_features = df[features].tail(10).values
         scaled_features = scaler.transform(latest_features)
         predictions = model.predict(scaled_features.reshape(1, 10, len(features)))
