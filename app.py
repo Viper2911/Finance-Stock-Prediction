@@ -58,12 +58,14 @@ def load_and_engineer_data(ticker):
     df["ATH_Proximity"] = df["Close"] / df["Historical_ATH"]
     df["ATL_Proximity"] = df["Close"] / df["Historical_ATL"]
     df["Intraday_Trend"] = (df["Close"] - df["Open"]) / df["Open"]
+    
     df["SMA_20"] = df["Close"].rolling(window=20).mean()
-
     change = df["Close"].diff()
     gain = change.mask(change < 0, 0.0)
     loss = -change.mask(change > 0, 0.0)
-    rs = gain.rolling(window=14).mean() / (loss.rolling(window=14).mean() + 1e-10)
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+    rs = avg_gain / (avg_loss + 1e-10) 
     df["RSI_14"] = 100 - (100 / (1 + rs))
 
     df.dropna(inplace=True)
