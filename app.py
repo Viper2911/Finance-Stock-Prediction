@@ -23,7 +23,8 @@ stocks = (
     'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 
     'ICICIBANK.NS', 'SBIN.NS', 'BHARTIARTL.NS', 'SUNPHARMA.NS', 
     'LAURUSLABS.NS', 'DRREDDY.NS', 'NESTLEIND.NS', 'HINDUNILVR.NS', 
-    'BEL.NS', 'IOC.NS', 'BAJFINANCE.NS', 'JIOFIN.NS', 'CDSL.NS'
+    'BEL.NS', 'IOC.NS', 'BAJFINANCE.NS', 'JIOFIN.NS', 'CDSL.NS',
+    'ETERNAL.NS', 'VEDL.NS'
 )
 
 with st.container(border=True):
