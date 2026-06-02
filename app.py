@@ -16,14 +16,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align: center;'>📈 Deep Learning Market Forecast</h1>", unsafe_allow_html=True)
-st.markdown("<h5 style='text-align: center; color: #888888; margin-bottom: 2rem;'>Powered by Custom LSTM Neural Network Architecture</h5>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>📈 Hybrid Market Forecast Engine</h1>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: #888888; margin-bottom: 2rem;'>Classification + Continuous Regression AI</h5>", unsafe_allow_html=True)
 
 stocks = (
-    'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 
-    'ICICIBANK.NS', 'SBIN.NS', 'BHARTIARTL.NS', 'SUNPHARMA.NS', 
-    'LAURUSLABS.NS', 'DRREDDY.NS', 'NESTLEIND.NS', 'HINDUNILVR.NS', 
-    'BEL.NS', 'IOC.NS', 'BAJFINANCE.NS', 'JIOFIN.NS', 'CDSL.NS',
+    'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS', 'SBIN.NS', 
+    'BHARTIARTL.NS', 'SUNPHARMA.NS', 'LAURUSLABS.NS', 'DRREDDY.NS', 'NESTLEIND.NS', 
+    'HINDUNILVR.NS', 'BEL.NS', 'IOC.NS', 'BAJFINANCE.NS', 'JIOFIN.NS', 'CDSL.NS',
     'ETERNAL.NS', 'VEDL.NS'
 )
 
@@ -38,116 +37,86 @@ def load_ml_assets():
     scaler = joblib.load("market_scaler.pkl")
     return model, scaler
 
-@st.cache_data
+@st.cache_data(ttl=3600)
 def load_and_engineer_data(ticker):
-    macro_tickers = {
-        "NIFTY50": "^NSEI",
-        "USD_INR": "INR=X",
-        "SP500": "^GSPC",
-        "CRUDE_OIL": "CL=F",
-        "VIX": "^VIX"
-    }
-    
+    macro_tickers = {"NIFTY50": "^NSEI", "USD_INR": "INR=X", "SP500": "^GSPC", "CRUDE_OIL": "CL=F", "VIX": "^VIX"}
     macro_dfs = []
     for name, m_ticker in macro_tickers.items():
         try:
-            m_df = yf.download(m_ticker, period="10y", progress=False)
+            m_df = yf.download(m_ticker, period="10y", interval="1d", progress=False)
             if not m_df.empty:
-                if isinstance(m_df.columns, pd.MultiIndex):
-                    m_df.columns = m_df.columns.droplevel(1)
+                if isinstance(m_df.columns, pd.MultiIndex): m_df.columns = m_df.columns.droplevel(1)
                 m_df[f"Macro_{name}_Return"] = m_df["Close"].pct_change()
                 macro_dfs.append(m_df[[f"Macro_{name}_Return"]])
         except:
             pass
 
-    macro_master = pd.concat(macro_dfs, axis=1)
-    macro_master = macro_master.ffill().bfill()
-
-    df = yf.download(ticker, period="10y", progress=False)
+    macro_master = pd.concat(macro_dfs, axis=1).ffill().bfill()
+    df = yf.download(ticker, period="10y", interval="1d", progress=False)
     
     if df.empty:
-        st.error("No data found.")
+        st.error("No data found. Yahoo Finance might be caching heavily. Try clearing the app cache.")
         st.stop()
-
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.droplevel(1)
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
 
     df["Historical_ATH"] = df["High"].cummax()
     df["Historical_ATL"] = df["Low"].cummin()
     df["ATH_Proximity"] = df["Close"] / df["Historical_ATH"]
     df["ATL_Proximity"] = df["Close"] / df["Historical_ATL"]
     df["Intraday_Trend"] = (df["Close"] - df["Open"]) / df["Open"]
-    
     df["SMA_20"] = df["Close"].rolling(window=20).mean()
     change = df["Close"].diff()
     gain = change.mask(change < 0, 0.0)
     loss = -change.mask(change > 0, 0.0)
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
-    rs = avg_gain / (avg_loss + 1e-10) 
+    rs = gain.rolling(14).mean() / (loss.rolling(14).mean() + 1e-10) 
     df["RSI_14"] = 100 - (100 / (1 + rs))
 
-    df = df.join(macro_master, how="left")
-    df.dropna(inplace=True)
-
+    df = df.join(macro_master, how="left").dropna()
     df.reset_index(inplace=True)
-    if "Date" not in df.columns:
-        df.rename(columns={df.columns[0]: "Date"}, inplace=True)
-
+    if "Date" not in df.columns: df.rename(columns={df.columns[0]: "Date"}, inplace=True)
     return df
 
 try:
     model, scaler = load_ml_assets()
-    st.toast("✅ Neural Network & Scaler Online", icon="🧠")
+    st.toast("✅ Hybrid Engine Active", icon="🧠")
 except Exception as e:
-    st.error(f"⚠️ Failed to load model/scaler.\n\nError: {e}")
+    st.error(f"⚠️ Scale mismatch. Ensure you uploaded the new model files. Error: {e}")
     st.stop()
 
-with st.spinner("Fetching macro indicators and engineering features..."):
+with st.spinner("Fetching data and running neural sequences..."):
     df = load_and_engineer_data(selected_stock)
 
 with st.container(border=True):
     st.subheader(f"Historical Trend: {selected_stock.replace('.NS', '')}")
-    
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df["Date"], y=df["Close"], name="Close Price", line=dict(color="#00ffcc", width=2)))
-    fig.add_trace(go.Scatter(x=df["Date"], y=df["SMA_20"], name="20-Day SMA", line=dict(color="#ff9900", dash="dot", width=2)))
-    
-    fig.update_layout(
-        xaxis_title="Date",
-        yaxis_title="Price (₹)",
-        xaxis_rangeslider_visible=True,
-        height=600,
-        template="plotly_dark",
-        margin=dict(l=0, r=0, t=50, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
-    )
+    fig.update_layout(xaxis_title="Date", yaxis_title="Price (₹)", height=450, template="plotly_dark")
     st.plotly_chart(fig, use_container_width=True)
 
 with st.container(border=True):
     st.subheader("🤖 AI Market Forecast for Tomorrow")
 
-    with st.spinner("Running neural network sequence..."):
-        features = [
-            "ATH_Proximity", "ATL_Proximity", "Intraday_Trend", "RSI_14", "SMA_20",
-            "Macro_NIFTY50_Return", "Macro_USD_INR_Return", "Macro_SP500_Return", 
-            "Macro_CRUDE_OIL_Return", "Macro_VIX_Return"
-        ]
-        
-        latest_features = df[features].tail(10).values
-        scaled_features = scaler.transform(latest_features)
-        predictions = model.predict(scaled_features.reshape(1, 10, len(features)))
+    features = [
+        "ATH_Proximity", "ATL_Proximity", "Intraday_Trend", "RSI_14", "SMA_20",
+        "Macro_NIFTY50_Return", "Macro_USD_INR_Return", "Macro_SP500_Return", 
+        "Macro_CRUDE_OIL_Return", "Macro_VIX_Return"
+    ]
+    
+    latest_features = df[features].tail(10).values
+    scaled_features = scaler.transform(latest_features)
+    
+    predictions = model.predict(scaled_features.reshape(1, 10, len(features)))
 
-        dir_prob = float(predictions[0][0][0])
-        ret_low = float(predictions[1][0][0])
-        ret_expected = float(predictions[2][0][0])
-        ret_high = float(predictions[3][0][0])
+    dir_prob = float(predictions[0][0][0])
+    pred_low_return = float(predictions[1][0][0])
+    pred_close_return = float(predictions[2][0][0])
+    pred_high_return = float(predictions[3][0][0])
 
-        last_close = float(df["Close"].iloc[-1])
-
-        price_expected = last_close * (1 + ret_expected)
-        price_low = last_close * (1 + ret_low)
-        price_high = last_close * (1 + ret_high)
+    last_close = float(df["Close"].iloc[-1])
+    
+    price_expected = last_close * (1 + pred_close_return)
+    price_low = min(last_close * (1 + pred_low_return), price_expected)
+    price_high = max(last_close * (1 + pred_high_return), price_expected)
 
     THRESHOLD = 0.50
     trend = "UP 📈" if dir_prob > THRESHOLD else "DOWN 📉"
