@@ -6,3 +6,5 @@ tensorflow
 scikit-learn
 joblib
 plotly
+textblob
+shap
